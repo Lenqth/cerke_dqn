@@ -1,0 +1,19 @@
+[package]
+name = "cerke_dqn"
+version = "0.1.0"
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+anyhow = "1.0.53"
+cetkaik_core = "0.3.8"
+cetkaik_full_state_transition =  { path = "../cetkaik_full_state_transition" }
+
+serde = "1.0.135"
+serde_json = "1.0.78"
+tch = "0.6.1"
+uuid = "0.8.2"
+
+rand = "0.8.4"
+rand_distr = "0.4.3"
