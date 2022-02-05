@@ -7,7 +7,7 @@ use rand_distr::StandardNormal;
 
 pub enum ActionResult {
     Finish(f32),
-    Continue,
+    Continue(f32),
 }
 
 #[derive(Clone, Debug)]
@@ -15,6 +15,16 @@ pub enum Phase {
     Start(state::A),
     AfterCiurl(state::C),
     Moved(state::HandNotResolved),
+}
+
+impl Phase {
+    pub fn whose_turn (&self) -> cetkaik_core::absolute::Side {
+        match self {
+            Phase::Start(x) => x.whose_turn,
+            Phase::AfterCiurl(x) => x.c.whose_turn,
+            Phase::Moved(x ) => x.whose_turn,
+        }
+    }
 }
 
 pub enum Action {
@@ -75,7 +85,7 @@ impl Environment for CerkeEnv {
                             .choose()
                             .0;
                     self.state = Phase::AfterCiurl(res);
-                    ActionResult::Continue
+                    ActionResult::Continue(0f32)
                 }
                 Action::Pure(PureMove::NormalMove(action)) => {
                     let res =
@@ -83,7 +93,16 @@ impl Environment for CerkeEnv {
                             .unwrap()
                             .choose()
                             .0;
-
+                    
+                    let piece_point = match state.whose_turn {
+                        cetkaik_core::absolute::Side::ASide => {
+                            (res.f.a_side_hop1zuo1.len() as i32) - (state.f.a_side_hop1zuo1.len() as i32)
+                        },
+                        cetkaik_core::absolute::Side::IASide => {
+                            (res.f.ia_side_hop1zuo1.len() as i32) - (state.f.ia_side_hop1zuo1.len() as i32)
+                        },
+                    };
+                    
                     let resolved = cetkaik_full_state_transition::resolve(&res, config);
                     self.state = match resolved {
                         state::HandResolved::NeitherTymokNorTaxot(s) => Phase::Start(s),
@@ -106,7 +125,7 @@ impl Environment for CerkeEnv {
                         }
                         _ => Phase::Moved(res),
                     };
-                    ActionResult::Continue
+                    ActionResult::Continue(piece_point as f32)
                 }
                 _ => unreachable!(),
             },
@@ -118,6 +137,15 @@ impl Environment for CerkeEnv {
                     .unwrap()
                     .choose()
                     .0;
+
+                    let piece_point = match state.c.whose_turn {
+                        cetkaik_core::absolute::Side::ASide => {
+                            (res.f.a_side_hop1zuo1.len() as i32) - (state.c.f.a_side_hop1zuo1.len() as i32)
+                        },
+                        cetkaik_core::absolute::Side::IASide => {
+                            (res.f.ia_side_hop1zuo1.len() as i32) - (state.c.f.ia_side_hop1zuo1.len() as i32)
+                        },
+                    };
 
                     let resolved = cetkaik_full_state_transition::resolve(&res, config);
                     self.state = match resolved {
@@ -142,7 +170,7 @@ impl Environment for CerkeEnv {
                         _ => Phase::Moved(res),
                     };
 
-                    ActionResult::Continue
+                    ActionResult::Continue(piece_point as f32)
                 }
                 _ => unreachable!(),
             },
@@ -159,7 +187,7 @@ impl Environment for CerkeEnv {
                         state::HandResolved::HandExists { if_tymok, if_taxot } => {
                             if tymok {
                                 self.state = Phase::Start(if_tymok);
-                                ActionResult::Continue
+                                ActionResult::Continue(0f32)
                             } else {
                                 match if_taxot {
                                     IfTaxot::NextSeason(s) => {

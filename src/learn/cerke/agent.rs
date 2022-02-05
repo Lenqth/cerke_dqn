@@ -199,39 +199,141 @@ impl CerkeAgent {
         }
     }
 
-    pub fn iteration(&mut self) {
-        let mut environment = environment::CerkeEnv::default();
+    fn parallel_select_action (&self, states: &Vec<Phase> ) -> Vec< (Action, usize) > {
+        enum Candidates {
+            Start(Vec<PureMove>,Vec<PureMove>),
+            AfterCiurl(Vec<AfterHalfAcceptance>),
+            Moved
+        }
 
+        let mut vecs = Vec::new();
+        let mut masks = Vec::new();
+        let mut candidates_vec = Vec::new();
+
+        for state in states.iter() {
+            vecs.push( state_to_feature(state) );
+            masks.push(
+                match state {
+                Phase::Start(state) => {
+                    let (hop1zuo1_candidates, candidates) = state.get_candidates(Config::cerke_online_alpha());
+                    let res = candidates_to_mask(&hop1zuo1_candidates, &candidates);
+                    candidates_vec.push(Candidates::Start(hop1zuo1_candidates, candidates));
+                    res
+                },
+                Phase::AfterCiurl(state) => {
+                    let candidates = state.get_candidates(Config::cerke_online_alpha());
+                    let res = afterhalf_candidates_to_mask(&candidates);
+                    candidates_vec.push(Candidates::AfterCiurl(candidates));
+                    res
+                },
+                Phase::Moved(_) => {
+                    candidates_vec.push(Candidates::Moved);
+                    tymok_mask()
+                }
+            })
+        }
+        let raw_res =self
+            .qnet
+            .forward(vecs.iter().map(|x| x.as_slice()).collect::<Vec<&[f32]>>()).unwrap();
+        
+        let mut result = Vec::new();
+        for (i, (res, candidates)) in raw_res.into_iter().zip(candidates_vec).enumerate() {
+            let mask = masks[i];
+
+            let mut max_value = f32::NEG_INFINITY;
+            let mut max_index = 0;
+
+            if rand::random::<f32>() < 0.98f32 {
+                for (i, v) in res.iter().enumerate() {
+                    if mask[i] == 1 && max_value < *v {
+                        max_index = i;
+                        max_value = *v;
+                    }
+                }
+            } else {
+                let mut candidates = Vec::new();
+                for (i, _v) in res.iter().enumerate() {
+                    if mask[i] == 1 {
+                        candidates.push(i);
+                    }
+                }
+                max_index = *candidates.choose(&mut thread_rng()).unwrap();
+            }
+            
+            result.push( match candidates {
+                Candidates::Start(hop1zuo1_candidates, candidates) => { 
+                    (
+                        Action::Pure(get_candidate_by_index(max_index, &hop1zuo1_candidates, &candidates)),
+                        max_index,
+                    )
+                },
+                Candidates::AfterCiurl(candidates) => {
+                    (
+                        Action::AfterHalf(get_after_half_candidate_by_index(max_index, &candidates)),
+                        max_index,
+                    )
+                },
+                Candidates::Moved => {
+                    (
+                        Action::IsTymok(get_tymok_candidate_by_index(max_index)),
+                        max_index
+                    )
+                },
+            })
+        } 
+
+        result
+    }
+
+    pub fn iteration(&mut self) {
         let mut scores = Vec::new();
-        for _i in 0..20 {
-            for _turn in 0..100 {
-                let env = environment.observe();
-                let (act, atc_id) = self.select_action(&env);
+
+        let mut environments = Vec::with_capacity(100);
+        for i in 0..100 {
+            environments.push(environment::CerkeEnv::default());
+        } 
+            
+        for _turn in 0..100 {
+
+            let states: Vec<Phase> = environments.iter().map(|environment| environment.observe()).collect();
+            let mut actions: Vec<Option<(Action, usize)>> = self.parallel_select_action(&states).into_iter().map(Some).collect();
+            let mut states: Vec<Option<Phase>> = states.into_iter().map(Some).collect();
+            let mut index = 0;
+
+            environments.retain_mut( |environment|{
+                let perv_env = states.get_mut(index).unwrap().take().unwrap();
+                let (act, atc_id) = actions.get_mut(index).unwrap().take().unwrap();
+                index += 1;
 
                 let res = environment.act(act);
                 let next_env = environment.observe();
-                if let ActionResult::Finish(v) = res {
-                    self.experience.put(Experience {
-                        current_state: env,
-                        next_state: next_env,
-                        action: atc_id,
-                        value: -1f32,
-                    });
-                    scores.push(v);
-                    break;
+                match res {
+                    ActionResult::Finish(v) => {
+                        self.experience.put(Experience {
+                            current_state: perv_env,
+                            next_state: next_env,
+                            action: atc_id,
+                            value: v,
+                        });
+                        scores.push(v);
+                        false
+                    },
+                    ActionResult::Continue(v) => {
+                        self.experience.put(Experience {
+                            current_state: perv_env,
+                            next_state: next_env,
+                            action: atc_id,
+                            value: v,
+                        });
+                        true
+                    },
                 }
-                self.experience.put(Experience {
-                    current_state: env,
-                    next_state: next_env,
-                    action: atc_id,
-                    value: 0.01f32,
-                });
-            }
+            });
         }
-        println!("{} : {}", self.it, scores.into_iter().sum::<f32>());
+        println!("{} : {:?}", self.it, scores);
 
         let mut update_batch = Vec::new();
-        let gamma = 0.998f32;
+        let gamma = 0.99f32;
 
         for _i in 0..500 {
             let Experience {
@@ -242,6 +344,12 @@ impl CerkeAgent {
             } = self.experience.sample();
 
             let max_q = self.max_q_sction(next_state);
+            let max_q = if current_state.whose_turn() != next_state.whose_turn() {
+                -max_q
+            } else {
+                max_q
+            };
+
             let new_q = value + gamma * max_q;
             let mut new_q_one_hot = [0f32; ACTION_SIZE];
             let mut mask_one_hot = [0f32; ACTION_SIZE];

@@ -1,3 +1,5 @@
+#![feature(vec_retain_mut)]
+
 use learn::cerke::agent::CerkeAgent;
 
 pub mod learn;
