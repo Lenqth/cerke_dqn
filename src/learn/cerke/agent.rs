@@ -4,6 +4,7 @@ use cetkaik_full_state_transition::{
     message::{AfterHalfAcceptance, PureMove},
     state, Config,
 };
+use chrono::Utc;
 use rand::{prelude::SliceRandom, thread_rng};
 use rand_distr::Distribution;
 
@@ -25,6 +26,7 @@ pub struct CerkeAgent {
     qnet: QNet,
     experience: Memory<Phase, usize>,
     it: i64,
+    name: String
 }
 
 impl CerkeAgent {
@@ -33,10 +35,11 @@ impl CerkeAgent {
             qnet: QNet::new(),
             experience: Memory::new(),
             it: 0,
+            name: Utc::now().format("%Y%m%dT%H%M%S").to_string()
         }
     }
 
-    fn max_q_sction(&self, env: &Phase) -> f32 {
+    fn max_q_sction(&self, env: &Phase, inverted: bool) -> f32 {
         let vec = state_to_feature(env);
         let res = {
             let mut batch = Vec::new();
@@ -59,11 +62,19 @@ impl CerkeAgent {
             Phase::Moved(_state) => tymok_mask(),
         };
 
-        res.into_iter()
-            .enumerate()
-            .filter_map(|(i, x)| if mask[i] > 0 { Some(x) } else { None })
-            .reduce(f32::max)
-            .unwrap()
+        if inverted {
+            res.into_iter()
+                .enumerate()
+                .filter_map(|(i, x)| if mask[i] > 0 { Some(-x) } else { None })
+                .reduce(f32::min)
+                .unwrap()
+        } else {
+            res.into_iter()
+                .enumerate()
+                .filter_map(|(i, x)| if mask[i] > 0 { Some(x) } else { None })
+                .reduce(f32::max)
+                .unwrap()
+        }
     }
 
     fn select_move(&self, state: &state::A) -> Result<(PureMove, usize), Box<dyn Error>> {
@@ -293,7 +304,7 @@ impl CerkeAgent {
             environments.push(environment::CerkeEnv::default());
         } 
             
-        for _turn in 0..100 {
+        for _turn in 0..40 {
 
             let states: Vec<Phase> = environments.iter().map(|environment| environment.observe()).collect();
             let mut actions: Vec<Option<(Action, usize)>> = self.parallel_select_action(&states).into_iter().map(Some).collect();
@@ -335,7 +346,7 @@ impl CerkeAgent {
         let mut update_batch = Vec::new();
         let gamma = 0.99f32;
 
-        for _i in 0..500 {
+        for _i in 0..1000 {
             let Experience {
                 current_state,
                 action,
@@ -343,13 +354,8 @@ impl CerkeAgent {
                 value,
             } = self.experience.sample();
 
-            let max_q = self.max_q_sction(next_state);
-            let max_q = if current_state.whose_turn() != next_state.whose_turn() {
-                -max_q
-            } else {
-                max_q
-            };
-
+            let max_q = self.max_q_sction(next_state, current_state.whose_turn() != next_state.whose_turn() );
+ 
             let new_q = value + gamma * max_q;
             let mut new_q_one_hot = [0f32; ACTION_SIZE];
             let mut mask_one_hot = [0f32; ACTION_SIZE];
@@ -370,6 +376,8 @@ impl CerkeAgent {
         self.it += 1;
         if self.it % 10 == 9 {
             self.qnet.update_hard();
+            let path = format!("./result/{}, {}", self.name, self.it);
+            self.qnet.save(&path);
         }
     }
 }

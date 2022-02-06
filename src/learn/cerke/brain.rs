@@ -14,14 +14,14 @@ fn network(vs: &nn::Path) -> impl ModuleT {
         .add(nn::linear(
             vs / "layer1",
             STATE_SIZE as i64,
-            128,
+            512,
             Default::default(),
         ))
-        .add(nn::batch_norm1d(vs, 128, Default::default()))
+        .add(nn::batch_norm1d(vs, 512, Default::default()))
         .add_fn(|xs| xs.relu())
-        .add(nn::linear(vs, 128, 128, Default::default()))
+        .add(nn::linear(vs, 512, 512, Default::default()))
         .add_fn(|xs| xs.relu())
-        .add(nn::linear(vs, 128, ACTION_SIZE as i64, Default::default()))
+        .add(nn::linear(vs, 512, ACTION_SIZE as i64, Default::default()))
 }
 
 pub trait Brain {
@@ -29,6 +29,7 @@ pub trait Brain {
     fn forward(&self, batch: Vec<&[f32]>) -> Result<Vec<Vec<f32>>>;
     fn update_hard(&mut self);
     fn update_soft(&mut self, tau: f64);
+    fn save(&self, name: &String);
 }
 
 pub struct QNet {
@@ -140,5 +141,10 @@ impl Brain for QNet {
 
     fn update_soft(&mut self, _tau: f64) {
         todo!()
+    }
+
+    fn save(&self, name: &String) {
+        self.vs_learn.save(name.clone() + "_learn.vs");
+        self.vs_target.save(name.clone() + "_target.vs");
     }
 }

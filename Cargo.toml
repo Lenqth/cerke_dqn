@@ -17,3 +17,4 @@ uuid = "0.8.2"
 
 rand = "0.8.4"
 rand_distr = "0.4.3"
+chrono = "0.4.19"

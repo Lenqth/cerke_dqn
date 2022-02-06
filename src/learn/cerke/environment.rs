@@ -120,12 +120,12 @@ impl Environment for CerkeEnv {
                                 cetkaik_core::absolute::Side::IASide => -1,
                             });
                             return ActionResult::Finish(
-                                (next_score - previous_score) as f32 * 1000f32,
+                                (next_score - previous_score) as f32,
                             );
                         }
                         _ => Phase::Moved(res),
                     };
-                    ActionResult::Continue(piece_point as f32)
+                    ActionResult::Continue(piece_point as f32 * 0.001f32)
                 }
                 _ => unreachable!(),
             },
@@ -164,13 +164,13 @@ impl Environment for CerkeEnv {
                                 cetkaik_core::absolute::Side::IASide => -1,
                             });
                             return ActionResult::Finish(
-                                (next_score - previous_score) as f32 * 1000f32,
+                                (next_score - previous_score) as f32,
                             );
                         }
                         _ => Phase::Moved(res),
                     };
 
-                    ActionResult::Continue(piece_point as f32)
+                    ActionResult::Continue(piece_point as f32 * 0.001f32)
                 }
                 _ => unreachable!(),
             },
@@ -200,11 +200,11 @@ impl Environment for CerkeEnv {
                                             }
                                         };
                                         ActionResult::Finish(
-                                            (next_score - previous_score) as f32 * 1000f32,
+                                            (next_score - previous_score) as f32,
                                         )
                                     }
                                     IfTaxot::VictoriousSide(_s) => {
-                                        ActionResult::Finish((20 - previous_score) as f32 * 1000f32)
+                                        ActionResult::Finish((20 - previous_score) as f32)
                                     }
                                 }
                             }
@@ -218,7 +218,7 @@ impl Environment for CerkeEnv {
                                 cetkaik_core::absolute::Side::ASide => 1,
                                 cetkaik_core::absolute::Side::IASide => -1,
                             });
-                            ActionResult::Finish((next_score - previous_score) as f32 * 1000f32)
+                            ActionResult::Finish((next_score - previous_score) as f32)
                         }
                     }
                 }
