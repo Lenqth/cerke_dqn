@@ -1,17 +1,15 @@
-#![feature(vec_retain_mut)]
-
 use std::time::Instant;
 
-use learn::cerke::agent::CerkeAgent;
-
-pub mod learn;
+use cerke_dqn::learn::cerke::agent::CerkeAgent;
+use cerke_dqn::learn::cerke::environment::ParallelCerke;
 
 fn main() {
     let mut cp = CerkeAgent::new();
 
     let now = Instant::now();
     for i in 0..10000 {
-        cp.iteration();
+        let mut env = ParallelCerke::new();
+        env.iteration(&mut cp);
         
         let elapsed_time = now.elapsed();
         println!("{} : {} sec", i + 1, elapsed_time.as_secs_f64());

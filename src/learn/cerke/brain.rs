@@ -30,6 +30,7 @@ pub trait Brain {
     fn update_hard(&mut self);
     fn update_soft(&mut self, tau: f64);
     fn save(&self, name: &String);
+    fn load(&mut self, name: &String);
 }
 
 pub struct QNet {
@@ -146,5 +147,10 @@ impl Brain for QNet {
     fn save(&self, name: &String) {
         self.vs_learn.save(name.clone() + "_learn.vs");
         self.vs_target.save(name.clone() + "_target.vs");
+    }
+
+    fn load(&mut self, name: &String) {
+        self.vs_learn.load(name.clone() + "_learn.vs");
+        self.vs_target.load(name.clone() + "_target.vs");
     }
 }

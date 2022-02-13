@@ -1,30 +1,15 @@
-use cetkaik_full_state_transition::{
-    message::{AfterHalfAcceptance, PureMove},
-    state, Config, IfTaxot, Victor,
-};
+use cetkaik_core::absolute::NonTam2Piece;
+use cetkaik_full_state_transition::{Config, IfTaxot, Scores, Victor, message::{AfterHalfAcceptance, PureMove}, state::{self, Phase}};
 
 use rand_distr::StandardNormal;
 
+use crate::learn::memory::Experience;
+
+use super::agent::CerkeAgent;
+
 pub enum ActionResult {
     Finish(f32),
-    Continue(f32),
-}
-
-#[derive(Clone, Debug)]
-pub enum Phase {
-    Start(state::A),
-    AfterCiurl(state::C),
-    Moved(state::HandNotResolved),
-}
-
-impl Phase {
-    pub fn whose_turn (&self) -> cetkaik_core::absolute::Side {
-        match self {
-            Phase::Start(x) => x.whose_turn,
-            Phase::AfterCiurl(x) => x.c.whose_turn,
-            Phase::Moved(x ) => x.whose_turn,
-        }
-    }
+    Continue,
 }
 
 pub enum Action {
@@ -62,9 +47,6 @@ impl CerkeEnv {
     }
 }
 
-pub const CARTPOLE_THRESHOLD_X: f32 = 2.4;
-pub const CARTPOLE_THRESHOLD_POLE: f32 = 24.0 * 2.0 * std::f32::consts::PI / 360.0;
-
 impl Environment for CerkeEnv {
     type Observable = Phase;
     type Action = Action;
@@ -85,7 +67,7 @@ impl Environment for CerkeEnv {
                             .choose()
                             .0;
                     self.state = Phase::AfterCiurl(res);
-                    ActionResult::Continue(0f32)
+                    ActionResult::Continue
                 }
                 Action::Pure(PureMove::NormalMove(action)) => {
                     let res =
@@ -93,15 +75,6 @@ impl Environment for CerkeEnv {
                             .unwrap()
                             .choose()
                             .0;
-                    
-                    let piece_point = match state.whose_turn {
-                        cetkaik_core::absolute::Side::ASide => {
-                            (res.f.a_side_hop1zuo1.len() as i32) - (state.f.a_side_hop1zuo1.len() as i32)
-                        },
-                        cetkaik_core::absolute::Side::IASide => {
-                            (res.f.ia_side_hop1zuo1.len() as i32) - (state.f.ia_side_hop1zuo1.len() as i32)
-                        },
-                    };
                     
                     let resolved = cetkaik_full_state_transition::resolve(&res, config);
                     self.state = match resolved {
@@ -125,7 +98,7 @@ impl Environment for CerkeEnv {
                         }
                         _ => Phase::Moved(res),
                     };
-                    ActionResult::Continue(piece_point as f32 * 0.001f32)
+                    ActionResult::Continue
                 }
                 _ => unreachable!(),
             },
@@ -137,15 +110,6 @@ impl Environment for CerkeEnv {
                     .unwrap()
                     .choose()
                     .0;
-
-                    let piece_point = match state.c.whose_turn {
-                        cetkaik_core::absolute::Side::ASide => {
-                            (res.f.a_side_hop1zuo1.len() as i32) - (state.c.f.a_side_hop1zuo1.len() as i32)
-                        },
-                        cetkaik_core::absolute::Side::IASide => {
-                            (res.f.ia_side_hop1zuo1.len() as i32) - (state.c.f.ia_side_hop1zuo1.len() as i32)
-                        },
-                    };
 
                     let resolved = cetkaik_full_state_transition::resolve(&res, config);
                     self.state = match resolved {
@@ -170,7 +134,7 @@ impl Environment for CerkeEnv {
                         _ => Phase::Moved(res),
                     };
 
-                    ActionResult::Continue(piece_point as f32 * 0.001f32)
+                    ActionResult::Continue
                 }
                 _ => unreachable!(),
             },
@@ -187,7 +151,7 @@ impl Environment for CerkeEnv {
                         state::HandResolved::HandExists { if_tymok, if_taxot } => {
                             if tymok {
                                 self.state = Phase::Start(if_tymok);
-                                ActionResult::Continue(0f32)
+                                ActionResult::Continue
                             } else {
                                 match if_taxot {
                                     IfTaxot::NextSeason(s) => {
@@ -225,5 +189,90 @@ impl Environment for CerkeEnv {
                 _ => unreachable!(),
             },
         }
+    }
+}
+
+pub struct ParallelCerke {
+    envs: Vec<CerkeEnv>
+}
+
+impl ParallelCerke{
+    pub fn new() -> Self {
+        let mut environments = Vec::with_capacity(100);
+        for i in 0..100 {
+            environments.push(CerkeEnv::default());
+        } 
+        Self {
+            envs: environments
+        }
+    }
+
+    fn score_delta(x: &Phase, y: &Phase) -> f32 {
+        let score_delta = x.get_score() - y.get_score();
+        if x.get_season() != y.get_season() {
+            score_delta as f32
+        } else {
+            score_delta as f32 + ((y.ia_side_hop1zuo1().len() as i32) - (x.ia_side_hop1zuo1().len() as i32) + (x.a_side_hop1zuo1().len() as i32) - (y.a_side_hop1zuo1().len() as i32)) as f32 * 0.001f32
+        }
+    }
+
+    pub fn iteration(&mut self, agent: &mut CerkeAgent) {
+        let mut last_state: (Vec<Option<Phase>>, Vec<Option<Phase>>) = (Vec::new(),Vec::new());
+        let mut finished = Vec::new();
+        for _i in 0..self.envs.len() {
+            last_state.0.push(None);
+            last_state.1.push(None);
+            finished.push(false);
+        }
+
+        for _turn in 0..40 {
+            let states: Vec<Phase> = self.envs.iter().map(|environment| environment.observe()).collect();
+
+            let mut actions: Vec<Option<(Action, usize)>> = agent.parallel_select_action(&states).into_iter().map(Some).collect();
+
+            let mut states: Vec<Option<Phase>> = states.into_iter().map(Some).collect();
+
+            for index in 0..self.envs.len() {
+                if finished[index] {
+                    continue;
+                }
+                let mut environment = self.envs.get_mut(index).unwrap();
+                let prev_env = states.get_mut(index).unwrap().take().unwrap();
+                let (act, atc_id) = actions.get_mut(index).unwrap().take().unwrap();
+
+                let last_state = match prev_env.whose_turn() {
+                    cetkaik_core::absolute::Side::ASide => &mut last_state.0,
+                    cetkaik_core::absolute::Side::IASide => &mut last_state.1,
+                }.get_mut(index).unwrap();
+                
+                let res = environment.act(act);
+
+                if let Some(last_state) = last_state {
+                    let v = Self::score_delta(&prev_env,&last_state);
+                    let v = match last_state.whose_turn() {
+                        cetkaik_core::absolute::Side::ASide => v,
+                        cetkaik_core::absolute::Side::IASide => -v,
+                    };
+                    agent.put_memory(Experience {
+                        current_state: last_state.clone(),
+                        next_state: prev_env.clone(),
+                        action: atc_id,
+                        value: v,
+                    });
+                }
+                *last_state = Some(prev_env);
+
+                finished[index] = match res {
+                    ActionResult::Finish(v) => {
+                        true
+                    },
+                    ActionResult::Continue => {
+                        false
+                    },
+                };
+            }
+
+        }
+        agent.train();
     }
 }

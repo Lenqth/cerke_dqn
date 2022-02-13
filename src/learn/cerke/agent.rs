@@ -1,18 +1,15 @@
 use std::error::Error;
 
-use cetkaik_full_state_transition::{
-    message::{AfterHalfAcceptance, PureMove},
-    state, Config,
-};
+use cetkaik_full_state_transition::{Config, message::{AfterHalfAcceptance, PureMove}, state::{self, Phase}};
 use chrono::Utc;
 use rand::{prelude::SliceRandom, thread_rng};
 use rand_distr::Distribution;
 
-use super::{brain::QNet, environment::Action};
+use super::{brain::QNet, environment::{Action, CerkeEnv}};
 use crate::learn::{
     cerke::{
         brain::Brain,
-        environment::{self, ActionResult, Environment, Phase},
+        environment::{self, ActionResult, Environment},
     },
     memory::{Experience, Memory},
     state_to_feature::{
@@ -33,6 +30,17 @@ impl CerkeAgent {
     pub fn new() -> Self {
         Self {
             qnet: QNet::new(),
+            experience: Memory::new(),
+            it: 0,
+            name: Utc::now().format("%Y%m%dT%H%M%S").to_string()
+        }
+    }
+
+    pub fn from_file(path: String) -> Self {
+        let mut qnet  = QNet::new();
+        qnet.load(&path);
+        Self {
+            qnet,
             experience: Memory::new(),
             it: 0,
             name: Utc::now().format("%Y%m%dT%H%M%S").to_string()
@@ -89,8 +97,12 @@ impl CerkeAgent {
             .pop()
             .unwrap();
 
+        /*
+        // epsilon - greedy 
+
         let mut max_value = f32::NEG_INFINITY;
         let mut max_index = 0;
+
 
         if rand::random::<f32>() < 0.98f32 {
             for (i, v) in res.iter().enumerate() {
@@ -108,6 +120,19 @@ impl CerkeAgent {
             }
             max_index = *candidates.choose(&mut thread_rng()).unwrap();
         }
+        */
+        
+        let beta = 2.0f32;
+        let items: Vec<f32> = res.iter().enumerate().map(|(i,x)| {
+            if mask[i] == 1 {
+                f32::exp(beta * x)
+            } else {
+                0f32
+            }
+        }).collect();
+        let wei = rand::distributions::WeightedIndex::new(items).unwrap();
+        let mut rng = thread_rng();
+        let max_index = wei.sample(&mut rng);
 
         Ok((
             get_candidate_by_index(max_index, &hop1zuo1_candidates, &candidates),
@@ -210,7 +235,7 @@ impl CerkeAgent {
         }
     }
 
-    fn parallel_select_action (&self, states: &Vec<Phase> ) -> Vec< (Action, usize) > {
+    pub fn parallel_select_action (&self, states: &Vec<Phase> ) -> Vec< (Action, usize) > {
         enum Candidates {
             Start(Vec<PureMove>,Vec<PureMove>),
             AfterCiurl(Vec<AfterHalfAcceptance>),
@@ -296,53 +321,15 @@ impl CerkeAgent {
         result
     }
 
-    pub fn iteration(&mut self) {
-        let mut scores = Vec::new();
+    pub fn select_para (&self, environments: Vec<CerkeEnv>) -> Vec<(Action, usize)> {
+        let states: Vec<Phase> = environments.iter().map(|environment| environment.observe()).collect();
+        self.parallel_select_action(&states)
+    }
 
-        let mut environments = Vec::with_capacity(100);
-        for i in 0..100 {
-            environments.push(environment::CerkeEnv::default());
-        } 
-            
-        for _turn in 0..40 {
-
-            let states: Vec<Phase> = environments.iter().map(|environment| environment.observe()).collect();
-            let mut actions: Vec<Option<(Action, usize)>> = self.parallel_select_action(&states).into_iter().map(Some).collect();
-            let mut states: Vec<Option<Phase>> = states.into_iter().map(Some).collect();
-            let mut index = 0;
-
-            environments.retain_mut( |environment|{
-                let perv_env = states.get_mut(index).unwrap().take().unwrap();
-                let (act, atc_id) = actions.get_mut(index).unwrap().take().unwrap();
-                index += 1;
-
-                let res = environment.act(act);
-                let next_env = environment.observe();
-                match res {
-                    ActionResult::Finish(v) => {
-                        self.experience.put(Experience {
-                            current_state: perv_env,
-                            next_state: next_env,
-                            action: atc_id,
-                            value: v,
-                        });
-                        scores.push(v);
-                        false
-                    },
-                    ActionResult::Continue(v) => {
-                        self.experience.put(Experience {
-                            current_state: perv_env,
-                            next_state: next_env,
-                            action: atc_id,
-                            value: v,
-                        });
-                        true
-                    },
-                }
-            });
-        }
-        println!("{} : {:?}", self.it, scores);
-
+    pub fn put_memory(&mut self, ex: Experience<Phase, usize>) { 
+        self.experience.put(ex)
+    }
+    pub fn train(&mut self) {         
         let mut update_batch = Vec::new();
         let gamma = 0.99f32;
 
@@ -354,7 +341,7 @@ impl CerkeAgent {
                 value,
             } = self.experience.sample();
 
-            let max_q = self.max_q_sction(next_state, current_state.whose_turn() != next_state.whose_turn() );
+            let max_q = self.max_q_sction(next_state, false );
  
             let new_q = value + gamma * max_q;
             let mut new_q_one_hot = [0f32; ACTION_SIZE];
@@ -376,7 +363,7 @@ impl CerkeAgent {
         self.it += 1;
         if self.it % 10 == 9 {
             self.qnet.update_hard();
-            let path = format!("./result/{}, {}", self.name, self.it);
+            let path = format!("./result/{}", self.name);
             self.qnet.save(&path);
         }
     }

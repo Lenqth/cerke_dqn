@@ -4,11 +4,9 @@ use cetkaik_core::{
     absolute::{Coord, NonTam2Piece, Piece, Side},
     Color,
 };
-use cetkaik_full_state_transition::message::{
+use cetkaik_full_state_transition::{message::{
     AfterHalfAcceptance, InfAfterStep, NormalMove, PureMove,
-};
-
-use super::cerke::environment::Phase;
+}, state::Phase};
 
 pub const STATE_SIZE: usize = 42 * 81 + 2 * 2 * (2 + 9 + 3 + 3 + 3 + 3 + 3 + 3 + 3 + 2);
 pub const ACTION_SIZE: usize = 20 * 81 + 81 * 81 + 81 + 3; // hand + normal move + half_acceptance + pass + tymok + taxot
